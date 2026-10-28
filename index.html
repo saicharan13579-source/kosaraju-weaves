@@ -1079,9 +1079,9 @@ renderG(0);showImg();cycle();
 
 /* ---------------- Prologue loom ---------------- */
 (()=>{
-const cv=$('#loom'),cx=cv.getContext('2d'),lbl=$('#figlabel');let W=0,H=0,dpr=Math.min(devicePixelRatio||1,2);
+const cv=$('#loom'),main=cv.getContext('2d'),lbl=$('#figlabel');let cx=main;const off=document.createElement('canvas'),ocx=off.getContext('2d');let W=0,H=0,dpr=Math.min(devicePixelRatio||1,2);
 const door=new Image();door.src='img/door.webp';
-function size(){const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=Math.max(1,W*dpr);cv.height=Math.max(1,H*dpr);cx.setTransform(dpr,0,0,dpr,0,0)}
+function size(){const r=cv.getBoundingClientRect();W=r.width;H=r.height;cv.width=off.width=Math.max(1,W*dpr);cv.height=off.height=Math.max(1,H*dpr);main.setTransform(dpr,0,0,dpr,0,0);ocx.setTransform(dpr,0,0,dpr,0,0)}
 size();addEventListener('resize',size);new ResizeObserver(size).observe(cv);
 const C={cream:'#f3e8d6',maroon:'#5e1822',maroon2:'#7d2b37',wine:'#43101a',gold:'#c9a15a',goldHi:'#f1d79c',rani:'#b0275a',teal:'#1f6a6a',purple:'#3d1a5c',orange:'#d2561f',copper:'#b8794a'};
 const cl=(v,a=0,b=1)=>Math.max(a,Math.min(b,v)),ease=x=>1-Math.pow(1-x,3),eio=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2;
@@ -1147,8 +1147,27 @@ const M=[
 ];
 let mode=0,prev=-1,tStart=performance.now(),tSwitch=0,vis=false;
 new IntersectionObserver(([e])=>vis=e.isIntersecting).observe(cv);
+/* fabric ripple under the pointer */
+const R=[];let lastAdd=0,lpx=0,lpy=0,hover=null;
+function addRipple(x,y,amp){R.push({x,y,t0:performance.now(),amp});if(R.length>14)R.shift()}
+const host=cv.closest('.archbox');
+function ptr(e){const r=cv.getBoundingClientRect(),pt=e.touches?e.touches[0]:e;const x=pt.clientX-r.left,y=pt.clientY-r.top;const now=performance.now(),sp=Math.hypot(x-lpx,y-lpy);hover={x,y};
+  if(now-lastAdd>60&&sp>2){addRipple(x,y,Math.min(9,2.5+sp*.18));lastAdd=now}lpx=x;lpy=y}
+host.addEventListener('pointermove',ptr);host.addEventListener('touchmove',ptr,{passive:true});
+host.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();addRipple(e.clientX-r.left,e.clientY-r.top,12)});
+host.addEventListener('pointerleave',()=>hover=null);
+function disp(x,y,now){let dx=0,dy=0,sh=0;for(const r of R){const age=(now-r.t0)/1000;if(age>2.2)continue;const ddx=x-r.x,ddy=y-r.y,d=Math.hypot(ddx,ddy)+.001,front=age*230,g=d-front;const env=Math.exp(-(g*g)/(2*80*80))*Math.pow(1-age/2.2,1.5);const w=Math.sin(g*.06)*r.amp*env;dx+=w*ddx/d;dy+=w*ddy/d;sh+=Math.cos(g*.06)*env*r.amp/12}
+  if(hover){const ddx=x-hover.x,ddy=y-hover.y,d2=ddx*ddx+ddy*ddy,b=Math.exp(-d2/(2*60*60))*4;dx+=ddx/60*b*.5;dy+=ddy/60*b*.5;sh+=b/12}
+  return [dx,dy,sh]}
+function warp(now){for(let i=R.length-1;i>=0;i--)if(now-R[i].t0>2200)R.splice(i,1);
+  const T=W<420?8:9;main.clearRect(0,0,W,H);
+  for(let y=0;y<H;y+=T)for(let x=0;x<W;x+=T){const [dx,dy,sh]=disp(x+T/2,y+T/2,now);
+    const sx=Math.max(0,Math.min(W-T-1,x-dx)),sy=Math.max(0,Math.min(H-T-1,y-dy));main.drawImage(off,sx*dpr,sy*dpr,(T+1)*dpr,(T+1)*dpr,x,y,T+1,T+1);
+    if(Math.abs(sh)>.02){main.fillStyle=sh>0?`rgba(255,244,220,${Math.min(.2,sh*.16)})`:`rgba(40,8,12,${Math.min(.22,-sh*.18)})`;main.fillRect(x,y,T+1,T+1)}}}
 function frame(now){requestAnimationFrame(frame);if(!vis||!W)return;const t=(now-tStart)/1000,k=cl((now-tSwitch)/700);
-  if(prev>=0&&k<1){M[prev](t);cx.globalAlpha=k;M[mode](t);cx.globalAlpha=1}else M[mode](t)}
+  const fabric=(R.length||hover)&&!RM;cx=fabric?ocx:main;
+  if(prev>=0&&k<1){M[prev](t);cx.globalAlpha=k;M[mode](t);cx.globalAlpha=1}else M[mode](t);
+  cx=main;if(fabric)warp(now)}
 if(RM){vis=true;const draw=()=>{if(W)M[mode](3)};setTimeout(draw,300);window._loomStatic=draw}else requestAnimationFrame(frame);
 const chaps=$$('.pchap');
 function setMode(m,fig){if(m===mode)return;prev=mode;mode=m;tSwitch=performance.now();tStart=performance.now();lbl.style.opacity=0;setTimeout(()=>{lbl.innerHTML=fig;lbl.style.opacity=1},250);if(RM&&window._loomStatic)window._loomStatic()}
