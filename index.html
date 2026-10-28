@@ -350,6 +350,7 @@ footer .kd .gate::before{inset:-10% -20%;background:radial-gradient(closest-side
 .playing .lc-dot.cur::after{animation:fill var(--dur,7s) linear forwards;transform:scaleX(0)}
 .loomfig .archbox{height:100%;width:auto;max-width:100%}
 .loomfig canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#loomgl{visibility:hidden}.gl-on #loomgl{visibility:visible}.gl-on #loom{visibility:hidden}
 .figlabel{font-family:var(--f-royal);font-size:.66em;letter-spacing:.28em;text-transform:uppercase;color:var(--gold-lo);display:flex;gap:12px;align-items:center;transition:opacity .4s}
 .figlabel::before,.figlabel::after{content:"";width:26px;height:1px;background:currentColor}
 .pchaps{position:relative}
@@ -650,7 +651,7 @@ footer small{color:var(--ink-soft);font-size:.82em}
     </div>
     <div class="scene">
       <div class="loomfig">
-        <div class="archbox"><div class="clip"><canvas id="loom" aria-label="Animated illustration of weaving"></canvas></div><img class="archline" src="img/arch-line.png" alt=""></div>
+        <div class="archbox"><div class="clip"><canvas id="loom" aria-label="Animated illustration of weaving"></canvas><canvas id="loomgl" aria-hidden="true"></canvas></div><img class="archline" src="img/arch-line.png" alt=""></div>
         <p class="figlabel" id="figlabel">Fig. I · The thread</p>
         <div class="loomctl" id="loomctl">
           <button class="lc-btn" id="lcPrev" aria-label="Previous chapter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M15 6l-6 6 6 6"/></svg></button>
@@ -1152,27 +1153,47 @@ const R=[];let lastAdd=0,lpx=0,lpy=0,hover=null;
 function addRipple(x,y,amp){R.push({x,y,t0:performance.now(),amp});if(R.length>14)R.shift()}
 const host=cv.closest('.archbox');
 function ptr(e){const r=cv.getBoundingClientRect(),pt=e.touches?e.touches[0]:e;const x=pt.clientX-r.left,y=pt.clientY-r.top;const now=performance.now(),sp=Math.hypot(x-lpx,y-lpy);hover={x,y};
-  if(now-lastAdd>70&&sp>2){addRipple(x,y,Math.min(11,3+sp*.22));lastAdd=now}lpx=x;lpy=y}
+  if(now-lastAdd>70&&sp>2){addRipple(x,y,Math.min(15,4+sp*.3));lastAdd=now}lpx=x;lpy=y}
 host.addEventListener('pointermove',ptr);host.addEventListener('touchmove',ptr,{passive:true});
 host.addEventListener('pointerdown',e=>{const r=cv.getBoundingClientRect();addRipple(e.clientX-r.left,e.clientY-r.top,12)});
 host.addEventListener('pointerleave',()=>hover=null);
-function warp(now){const t=now/1000;for(let i=R.length-1;i>=0;i--)if(now-R[i].t0>2600)R.splice(i,1);
-  const cs=W<420?4:3,segs=14,sh=H/segs;main.clearRect(0,0,W,H);
-  // vertical offset of the cloth at column x and height y
-  const F=(x,y)=>{const pin=.12+.88*Math.pow(y/H,1.15);
-    let f=(Math.sin(x*.045-t*1.5)*2.4+Math.sin(x*.018+t*.85)*1.8+Math.sin(x*.11-t*2.6)*.5)*pin;
-    for(const r of R){const age=(now-r.t0)/1000,d=Math.abs(x-r.x),g=d-age*240;const env=Math.exp(-(g*g)/(2*95*95))*Math.pow(Math.max(0,1-age/2.6),1.4)*Math.exp(-((y-r.y)**2)/(2*230*230));f+=Math.sin(g*.055)*r.amp*env*(.35+.65*pin)}
-    if(hover){const d=x-hover.x;f+=Math.exp(-(d*d)/(2*60*60))*Math.exp(-((y-hover.y)**2)/(2*160*160))*Math.sin(t*3.2+d*.05)*2.2}
-    return f};
-  for(let x=0;x<W;x+=cs){for(let j=0;j<segs;j++){const y=j*sh,yc=y+sh/2,f=F(x+cs/2,yc);
-      const sy=Math.max(0,Math.min(H-sh-1,y-f));
-      main.drawImage(off,x*dpr,sy*dpr,(cs+.6)*dpr,(sh+1.2)*dpr,x,y,cs+.6,sh+1.2);
-      const slope=(F(x+cs*1.5,yc)-F(x-cs*.5,yc))/(cs*2);
-      const a=Math.min(.24,Math.abs(slope)*.55);if(a>.012){main.fillStyle=slope<0?`rgba(255,242,214,${a})`:`rgba(36,6,10,${a*1.15})`;main.fillRect(x,y,cs+.6,sh+1.2)}}}}
+/* WebGL cloth: smooth per-pixel waves */
+const glc=$('#loomgl');let gl=null,prog,tex,U={};
+try{gl=RM?null:glc.getContext('webgl',{premultipliedAlpha:false,antialias:false})}catch(e){gl=null}
+if(gl){const vs=`attribute vec2 a;varying vec2 v;void main(){v=a*.5+.5;gl_Position=vec4(a,0.,1.);}`;
+ const fs=`precision mediump float;varying vec2 v;uniform sampler2D tx;uniform vec2 res;uniform float t,on;uniform vec4 rp[14];uniform vec3 hv;
+ float F(vec2 p){float pin=.12+.88*pow(clamp(p.y/res.y,0.,1.),1.15);
+  float f=(sin(p.x*.045-t*1.5)*2.4+sin(p.x*.018+t*.85)*1.8+sin(p.x*.11-t*2.6)*.5)*pin;
+  for(int i=0;i<14;i++){vec4 r=rp[i];if(r.w>0.){float g=distance(p,r.xy)-r.z*230.;float env=exp(-(g*g)/11250.)*pow(max(0.,1.-r.z/2.6),1.4);f+=sin(g*.07)*r.w*env;}}
+  if(hv.z>0.){vec2 d=p-hv.xy;f+=exp(-(d.x*d.x)/7200.)*exp(-(d.y*d.y)/51200.)*sin(t*3.2+d.x*.05)*2.2;}
+  return f*on;}
+ void main(){vec2 p=vec2(v.x,1.-v.y)*res;float f=F(p);float fx=F(p+vec2(1.5,0.))-f,fy=F(p+vec2(0.,1.5))-f;
+  vec2 sp=p-vec2(fx*2.,f+fy*2.);sp=clamp(sp,vec2(0.),res-1.);
+  vec4 c=texture2D(tx,vec2(sp.x/res.x,1.-sp.y/res.y));
+  float sl=(fx+fy*.6)/1.5;
+  c.rgb=mix(c.rgb,vec3(1.,.95,.84),clamp(-sl*.6,0.,.26));
+  c.rgb=mix(c.rgb,vec3(.14,.02,.04),clamp(sl*.65,0.,.28));
+  gl_FragColor=vec4(c.rgb,1.);}`;
+ const sh=(type,src)=>{const o=gl.createShader(type);gl.shaderSource(o,src);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(o);return o};
+ try{prog=gl.createProgram();gl.attachShader(prog,sh(gl.VERTEX_SHADER,vs));gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,fs));gl.linkProgram(prog);gl.useProgram(prog);
+  const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(prog,'a');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  tex=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,tex);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  ['res','t','on','rp','hv'].forEach(n=>U[n]=gl.getUniformLocation(prog,n));
+  cv.closest('.archbox').classList.add('gl-on');
+ }catch(err){gl=null}}
+const rpArr=new Float32Array(56);
+function glDraw(now,on){if(glc.width!==off.width||glc.height!==off.height){glc.width=off.width;glc.height=off.height}
+ gl.viewport(0,0,glc.width,glc.height);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,off);
+ for(let i=R.length-1;i>=0;i--)if(now-R[i].t0>2600)R.splice(i,1);
+ rpArr.fill(0);R.forEach((r,i)=>{rpArr[i*4]=r.x;rpArr[i*4+1]=r.y;rpArr[i*4+2]=(now-r.t0)/1000;rpArr[i*4+3]=r.amp});
+ gl.uniform2f(U.res,W,H);gl.uniform1f(U.t,now/1000);gl.uniform1f(U.on,on);gl.uniform4fv(U.rp,rpArr);gl.uniform3f(U.hv,hover?hover.x:0,hover?hover.y:0,hover?1:0);
+ gl.drawArrays(gl.TRIANGLE_STRIP,0,4)}
 function frame(now){requestAnimationFrame(frame);if(!vis||!W)return;const t=(now-tStart)/1000,k=cl((now-tSwitch)/700);
-  const fabric=!RM&&mode!==6;cx=fabric?ocx:main;
+  cx=gl?ocx:main;
   if(prev>=0&&k<1){M[prev](t);cx.globalAlpha=k;M[mode](t);cx.globalAlpha=1}else M[mode](t);
-  cx=main;if(fabric)warp(now)}
+  cx=main;if(gl)glDraw(now,mode===6?0:1)}
 if(RM){vis=true;const draw=()=>{if(W)M[mode](3)};setTimeout(draw,300);window._loomStatic=draw}else requestAnimationFrame(frame);
 const chaps=$$('.pchap');
 function setMode(m,fig){if(m===mode)return;prev=mode;mode=m;tSwitch=performance.now();tStart=performance.now();lbl.style.opacity=0;setTimeout(()=>{lbl.innerHTML=fig;lbl.style.opacity=1},250);if(RM&&window._loomStatic)window._loomStatic()}
